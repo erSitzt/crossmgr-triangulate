@@ -1,5 +1,6 @@
 import { useStore, type Tab } from './store';
 import { CapturePanel } from './ui/CapturePanel';
+import { PhasePanel } from './ui/PhasePanel';
 import { Scene } from './ui/Scene';
 import { SetupPanel } from './ui/SetupPanel';
 import { SolvePanel } from './ui/SolvePanel';
@@ -11,6 +12,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'survey', label: 'Survey' },
   { id: 'capture', label: 'Capture' },
   { id: 'solve', label: 'Solve' },
+  { id: 'phase', label: 'Phase' },
   { id: 'validate', label: 'Validate' },
 ];
 
@@ -48,6 +50,7 @@ export function App() {
         {tab === 'survey' && <SurveyPanel />}
         {tab === 'capture' && <CapturePanel />}
         {tab === 'solve' && <SolvePanel />}
+        {tab === 'phase' && <PhasePanel />}
         {tab === 'validate' && <ValidatePanel />}
       </div>
     </div>

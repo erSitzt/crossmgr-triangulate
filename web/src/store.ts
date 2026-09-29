@@ -4,10 +4,12 @@ import { migrateSetup } from '@antenna/model/normalize';
 import { makeDefaultSetup } from '@antenna/presets/templates';
 import { aggregate, type Capture, type Read } from './capture/stats';
 import { DEFAULT_PRIORS, type AntennaFitSpec, type Priors } from './solve/params';
+import type { CombinedResult } from './phase/combined';
+import type { Walk } from './phase/walk';
 import type { FitResult } from './solve/rssiFit';
 import { makeDefaultSurvey, parseSurvey, type Survey } from './survey/types';
 
-export type Tab = 'setup' | 'survey' | 'capture' | 'solve' | 'validate';
+export type Tab = 'setup' | 'survey' | 'capture' | 'solve' | 'phase' | 'validate';
 export type CaptureSource = 'live' | 'file' | 'sim';
 
 const MAX_READS = 500_000;
@@ -17,6 +19,7 @@ interface Persisted {
   setup: Setup;
   survey: Survey;
   specs: AntennaFitSpec[];
+  walks: Walk[]; // persisted without reads
 }
 
 function load(): Partial<Persisted> {
@@ -24,7 +27,7 @@ function load(): Partial<Persisted> {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return {};
     const p = JSON.parse(raw);
-    return { setup: migrateSetup(p.setup), survey: parseSurvey(p.survey), specs: p.specs };
+    return { setup: migrateSetup(p.setup), survey: parseSurvey(p.survey), specs: p.specs, walks: (p.walks ?? []).map((w: Walk) => ({ ...w, reads: [] })) };
   } catch {
     return {};
   }
@@ -48,11 +51,13 @@ interface State extends Persisted {
   /** "real world" used by the simulated capture, to compare against the fit */
   simTruth: Setup | null;
   selectedEpc: string | null;
+  phaseFit: CombinedResult | null;
 
   setTab(t: Tab): void;
   setSetup(s: Setup): void;
   setSurvey(s: Survey): void;
   setSpecs(s: AntennaFitSpec[]): void;
+  setWalks(w: Walk[]): void;
   addReads(r: Read[]): void;
   setCapture(c: Capture, source: CaptureSource, label: string, reads?: Read[], truth?: Setup | null): void;
   clearCapture(): void;
@@ -66,6 +71,8 @@ export const useStore = create<State>((set, get) => ({
   setup: initSetup,
   survey: init.survey ?? makeDefaultSurvey(),
   specs: init.specs?.length ? init.specs : defaultSpecs(initSetup),
+  walks: init.walks ?? [],
+  phaseFit: null,
   tab: 'setup',
   reads: [],
   capture: null,
@@ -81,9 +88,10 @@ export const useStore = create<State>((set, get) => ({
   selectedEpc: null,
 
   setTab: (tab) => set({ tab }),
-  setSetup: (setup) => set({ setup, specs: defaultSpecs(setup), fit: null }),
+  setSetup: (setup) => set({ setup, specs: defaultSpecs(setup), fit: null, phaseFit: null }),
   setSurvey: (survey) => set({ survey, fit: null }),
   setSpecs: (specs) => set({ specs }),
+  setWalks: (walks) => set({ walks, phaseFit: null }),
   addReads: (r) => {
     const reads = get().reads.concat(r);
     set({ reads: reads.length > MAX_READS ? reads.slice(-MAX_READS) : reads, captureSource: 'live' });
@@ -107,9 +115,10 @@ useStore.subscribe((s, prev) => {
 });
 
 useStore.subscribe((s, prev) => {
-  if (s.setup === prev.setup && s.survey === prev.survey && s.specs === prev.specs) return;
+  if (s.setup === prev.setup && s.survey === prev.survey && s.specs === prev.specs && s.walks === prev.walks) return;
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify({ setup: s.setup, survey: s.survey, specs: s.specs }));
+    const walks = s.walks.map((w) => ({ ...w, reads: [] }));
+    localStorage.setItem(LS_KEY, JSON.stringify({ setup: s.setup, survey: s.survey, specs: s.specs, walks }));
   } catch {
     /* storage unavailable: keep working in memory */
   }

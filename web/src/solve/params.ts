@@ -6,9 +6,10 @@ import { boresight } from '@antenna/rf/math';
  * How an antenna's pose is estimated:
  *  free  – position x/y/z plus yaw/pitch
  *  mount – stays on its truss member: offset along the member plus yaw/pitch (3 unknowns instead of 5)
+ *  angles – position taken as known (e.g. from the phase fit), only yaw/pitch are fitted
  *  fixed – pose taken as measured, only the gain offset may be fitted
  */
-export type PoseMode = 'free' | 'mount' | 'fixed';
+export type PoseMode = 'free' | 'mount' | 'angles' | 'fixed';
 
 export interface AntennaFitSpec {
   antennaId: string;
@@ -35,7 +36,12 @@ export interface ParamDef {
 
 const STEP: Record<ParamKey, number> = { x: 0.005, y: 0.005, z: 0.005, along: 0.005, yaw: 0.1, pitch: 0.1, offset: 0.02 };
 
-export function buildParams(setup: Setup, specs: AntennaFitSpec[], priors: Priors = DEFAULT_PRIORS): { defs: ParamDef[]; x0: number[] } {
+export function buildParams(
+  setup: Setup,
+  specs: AntennaFitSpec[],
+  priors: Priors = DEFAULT_PRIORS,
+  only?: 'position',
+): { defs: ParamDef[]; x0: number[] } {
   const defs: ParamDef[] = [];
   const x0: number[] = [];
   const add = (antennaId: string, key: ParamKey, mean: number, sd: number) => {
@@ -51,6 +57,7 @@ export function buildParams(setup: Setup, specs: AntennaFitSpec[], priors: Prior
       add(a.id, 'y', a.position[1], priors.posSdM);
       add(a.id, 'z', a.position[2], priors.posSdM);
     } else if (mode === 'mount') add(a.id, 'along', a.mount!.alongM, priors.posSdM);
+    if (only === 'position') continue;
     if (mode !== 'fixed') {
       add(a.id, 'yaw', a.yawDeg, priors.angSdDeg);
       add(a.id, 'pitch', a.pitchDeg, priors.angSdDeg);

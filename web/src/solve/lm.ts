@@ -4,6 +4,8 @@ export interface LmOptions {
   maxIter?: number;
   lambda0?: number;
   tol?: number; // relative cost decrease that counts as converged
+  /** analytic Jacobian (m × n) at x; forward differences with `steps` otherwise */
+  jac?: (x: number[], r: number[]) => number[][];
 }
 
 export interface LmResult {
@@ -85,7 +87,8 @@ export function levenbergMarquardt(f: (x: number[]) => number[], x0: number[], s
   let x = [...x0];
   let r = f(x);
   let cost = 0.5 * sumSq(r);
-  let J = jacobian(f, x, steps, r);
+  const jac = opts.jac ?? ((xx: number[], rr: number[]) => jacobian(f, xx, steps, rr));
+  let J = jac(x, r);
   let it = 0;
   for (; it < maxIter; it++) {
     const A = normalMatrix(J);
@@ -115,7 +118,7 @@ export function levenbergMarquardt(f: (x: number[]) => number[], x0: number[], s
       lambda *= 4;
     }
     if (!improved) break;
-    J = jacobian(f, x, steps, r);
+    J = jac(x, r);
   }
   return { x, cost, r, J, iterations: Math.min(it, maxIter) };
 }

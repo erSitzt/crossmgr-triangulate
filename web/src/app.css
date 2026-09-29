@@ -22,3 +22,8 @@ code { background: var(--bg); padding: 0 3px; border-radius: 3px; }
 .row input { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; font: inherit; }
 pre.log { max-height: 180px; overflow: auto; font-size: 11px; background: var(--bg); padding: 6px; border-radius: 4px; white-space: pre-wrap; }
 details summary { cursor: pointer; }
+.walk { border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; margin: 6px 0; }
+.walk .num { width: 64px; }
+.walk .epc { width: 150px; }
+.walk .end { width: 30px; }
+.walk-label { color: #ffd166; font-weight: 400; white-space: nowrap; }

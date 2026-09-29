@@ -69,6 +69,24 @@ function RefTags() {
   );
 }
 
+function Walks() {
+  const walks = useStore((s) => s.walks);
+  return (
+    <>
+      {walks.map((w) => (
+        <group key={w.id}>
+          <Line points={[w.from, w.to]} color="#ffd166" lineWidth={1.5} dashed dashSize={0.2} gapSize={0.1} />
+          <mesh position={w.to}>
+            <sphereGeometry args={[0.05, 10, 8]} />
+            <meshStandardMaterial color="#ffd166" />
+          </mesh>
+          <Html position={w.from} center className="scene-label walk-label">{w.label}</Html>
+        </group>
+      ))}
+    </>
+  );
+}
+
 export function Scene() {
   const setup = useStore((s) => s.setup);
   const fit = useStore((s) => s.fit);
@@ -85,6 +103,7 @@ export function Scene() {
       {fit && <Antennas setup={setup} antennas={fit.antennas} variant="fitted" />}
       {truth && <Antennas setup={setup} antennas={truth.antennas} variant="truth" />}
       <RefTags />
+      <Walks />
       <OrbitControls target={[0, 1, 0]} makeDefault />
     </Canvas>
   );

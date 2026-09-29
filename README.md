@@ -26,6 +26,43 @@ Synthetic recovery uses the default arch (2 antennas on the left upright, 1 on t
 
 95–100% of the true values fall within the reported ±3σ. These numbers assume the model is right apart from random scatter. In the field, systematic model error (tag detuning, ground, nearby metal) adds to them, and the Validate tab is where you see it.
 
+### Phase walks: cm-level positions
+
+The R420 reports the RF phase of every read, and the round-trip phase is 4π·d/λ plus an unknown offset. Carry one tag along a straight, chalked line at walking pace, and each antenna records how its range to the tag changes, to a few mm. The phase fit (Phase tab) takes these range curves and solves for:
+
+- each antenna's **phase-centre position** (x/y/z),
+- the walking-speed profile, shared by all antennas (knots every 1 s, kept smooth),
+- one unknown offset per gap-free series of reads (solved in closed form),
+- the reader's phase sign convention.
+
+It works on 2θ, which removes the π jumps in the Impinj phase report.
+
+Phase only gives positions. The antennas' aim still comes from the RSSI grid: *Then fit yaw/pitch/gain from the RSSI capture* holds the phase positions fixed and fits only the angles and gain offset.
+
+Synthetic results use 3 recommended walks, 0.1 rad phase noise, 5 mm multipath and a plan up to 1 m / 15° off, over 8 seeds:
+
+| | position (median / p90) | pitch (median / p90) | yaw (median / p90) |
+|---|---|---|---|
+| RSSI grid only | 8.6 / 34 cm | 3.4 / 16° | 1.4 / 2.6° |
+| Phase walks + RSSI grid | **1.3 / 3.0 cm** | 2.2 / 8.9° | 1.5 / 3.6° |
+
+**Walk geometry matters.** Every point on a circle around a straight line has the same range curve, so one walk leaves each antenna's position ambiguous (mirror images). Walks all at about the same height leave height weakly determined. The *Recommended* button sets up:
+
+1. along the centre line at 0.4 m,
+2. across under the arch at 1.6 m,
+3. low (0.3 m) along the track edge, 0.8 m in front of each upright that carries antennas.
+
+The third walk is what pins down the height of antennas on the uprights. The fit warns when a coordinate stays weak.
+
+**Protocol per walk:**
+
+- Tag on a non-metallic pole, dipole vertical.
+- Stand **3 s** on the start mark, walk **slowly (≤ 0.5 m/s)** to the end mark, stand **3 s**. The still phases anchor where the walk starts and ends.
+- Use one **fixed channel**. With hopping, each channel only gets a quarter of the reads, and the phase can't be unwrapped.
+- Keep everyone else out of the zone.
+
+Recording and loading sessions work the same way as for the grid.
+
 Out of scope: tracking moving riders. The R420 visits its ports one after another (about 25 ms each), so at race speed the three antennas never see the tag at the same position.
 
 ## Physical setup
@@ -77,8 +114,9 @@ To check a reader once (this shows whether phase, Doppler and high-resolution RS
 2. **Survey:** enter the reference tags. EPCs the reader has seen are offered in the EPC field.
 3. **Capture:** connect (or tick *Mock reader*), then Start and Record. Sessions are saved as JSONL in `sessions/` and can be loaded again with *Load session…*. *Simulate capture* rehearses the whole flow using the RF model, with random mounting errors whose truth is shown in green.
 4. **Solve:** choose per antenna *on truss* (along the member + yaw/pitch; fewest unknowns), *free* or *fixed*, then *Fit antennas*.
-5. **Validate:** look at Δ = measured − model per port and per tag, the missed/unexpected reads, and the ground scan.
-6. **Export setup** (Solve tab) and import that into crossmgr-antenna. Its pass simulation and virtual wall then use the measured antenna poses.
+5. **Phase** (optional, recommended): *Recommended* walks, then for each walk *From live reads* / *Load session…* / *Simulate*, then *Fit positions*. The result becomes the current fit.
+6. **Validate:** look at Δ = measured − model per port and per tag, the missed/unexpected reads, and the ground scan.
+7. **Export setup** (Solve tab) and import that into crossmgr-antenna. Its pass simulation and virtual wall then use the measured antenna poses.
 
 ## Layout
 
@@ -90,13 +128,14 @@ server/                 FastAPI + sllurp bridge
 web/src/
   survey/               reference tags, grid generator, survey.json
   capture/              live WebSocket client, aggregation (median RSSI, rate, circular-mean phase per channel)
-  solve/                parameters (free / truss mount), LM solver, fit, synthetic truth, web worker
+  solve/                parameters (free / truss mount / angles), LM solver, RSSI fit, synthetic truth, web worker
+  phase/                walks: still-phase detection, 2θ unwrapping, phase fit (analytic Jacobian), RSSI combination, synthetic walks
   validate/             residual summaries, ground scan
   ui/                   panels + 3D view (reuses crossmgr-antenna's TrackMesh / TrussMesh)
 vendor/crossmgr-antenna git submodule
 ```
 
-Tests: `cd web && npm test` (solver recovery, parameters, statistics, validation) and `cd server && ../.venv/Scripts/python -m pytest` (report parsing, sllurp config and ROSpec encoding).
+Tests: `cd web && npm test` (RSSI and phase recovery, walk preparation, parameters, statistics, validation) and `cd server && ../.venv/Scripts/python -m pytest` (report parsing, sllurp config and ROSpec encoding).
 
 ## Notes on LLRP / sllurp
 
@@ -108,6 +147,7 @@ Tests: `cd web && npm test` (solver recovery, parameters, statistics, validation
 
 ## Roadmap
 
-- **Phase fit:** walk a tag along a straight, chalked line and unwrap the phase per antenna. Fitting the range curve (a hyperbola) gives cm-level antenna positions, which can then be combined with the RSSI fit.
+- A mock-reader mode in the bridge that plays back a walk (phase walks can be rehearsed in the web simulator today).
+- Phase with channel hopping: a per-channel offset is already modelled, but the unwrapping needs denser reads per channel.
 - **Multi-placement fit:** several survey + capture pairs in one solve, so a few tags can cover many spots.
 - Fitting global model parameters (tag backscatter, reader sensitivity) jointly, not just scanning them.
