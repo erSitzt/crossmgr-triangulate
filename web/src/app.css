@@ -1,0 +1,24 @@
+/* on top of crossmgr-antenna's styles.css */
+.sidebar.wide { width: 480px; }
+.legend { flex-wrap: wrap; gap: 10px; font-size: 12px; }
+.scene-label { color: #fff; font-size: 11px; font-weight: 600; pointer-events: none; }
+.ok { color: #3ecf8e; }
+.grow { flex: 1; min-width: 0; }
+code { background: var(--bg); padding: 0 3px; border-radius: 3px; }
+
+.tbl { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.tbl th { text-align: left; color: var(--muted); font-weight: 500; padding: 3px 4px; border-bottom: 1px solid var(--border); }
+.tbl td { padding: 2px 4px; border-bottom: 1px solid #242a31; white-space: nowrap; }
+.tbl tr.sel td { background: #2b3647; }
+.tbl tr.best td { color: #3ecf8e; }
+.tbl input, .tbl select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; padding: 2px 4px; font: inherit; }
+.tbl input.num { width: 58px; }
+.tbl input.epc { width: 150px; }
+.tbl button { padding: 0 6px; }
+.matrix td.miss, span.miss { color: var(--warn); }
+.matrix td.good { color: #3ecf8e; }
+.matrix td.meh { color: #ffd166; }
+.matrix td.bad { color: var(--warn); font-weight: 600; }
+.row input { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; font: inherit; }
+pre.log { max-height: 180px; overflow: auto; font-size: 11px; background: var(--bg); padding: 6px; border-radius: 4px; white-space: pre-wrap; }
+details summary { cursor: pointer; }
