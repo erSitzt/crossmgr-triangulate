@@ -63,6 +63,8 @@ The third walk is what pins down the height of antennas on the uprights. The fit
 
 Recording and loading sessions work the same way as for the grid.
 
+**Rehearsing with the mock reader.** When connected to the mock, each walk gets a *Mock walk* button. It plays the walk back through the bridge as live reads, using the same stand/walk/stand pattern with phase noise and the Impinj π jumps. The positions it uses are the green "true" antennas (Capture → Offline → *Simulate capture* sets them), so you can compare the fit against them. Walk reads don't replace the current RSSI capture. The speed-up (up to 8×) keeps the reads per metre the same, and the timestamps stay on the walk's own clock. The WebSocket command is `{"cmd": "mockWalk", "from": [...], "to": [...], "epc": "WALK0001", "speed": 0.35, "standS": 3, "timeScale": 1, "antennas": [{"port": 1, "position": [...]}]}`. The mock's RSSI is a plain distance model with no antenna pattern, so rehearse the angle refinement with a simulated capture, not with the mock's own static tags.
+
 Out of scope: tracking moving riders. The R420 visits its ports one after another (about 25 ms each), so at race speed the three antennas never see the tag at the same position.
 
 ## Physical setup
@@ -114,7 +116,7 @@ To check a reader once (this shows whether phase, Doppler and high-resolution RS
 2. **Survey:** enter the reference tags. EPCs the reader has seen are offered in the EPC field.
 3. **Capture:** connect (or tick *Mock reader*), then Start and Record. Sessions are saved as JSONL in `sessions/` and can be loaded again with *Load session…*. *Simulate capture* rehearses the whole flow using the RF model, with random mounting errors whose truth is shown in green.
 4. **Solve:** choose per antenna *on truss* (along the member + yaw/pitch; fewest unknowns), *free* or *fixed*, then *Fit antennas*.
-5. **Phase** (optional, recommended): *Recommended* walks, then for each walk *From live reads* / *Load session…* / *Simulate*, then *Fit positions*. The result becomes the current fit.
+5. **Phase** (optional, recommended): *Recommended* walks, then for each walk *From live reads* / *Load session…* / *Simulate* (or *Mock walk* when connected to the mock reader), then *Fit positions*. The result becomes the current fit.
 6. **Validate:** look at Δ = measured − model per port and per tag, the missed/unexpected reads, and the ground scan.
 7. **Export setup** (Solve tab) and import that into crossmgr-antenna. Its pass simulation and virtual wall then use the measured antenna poses.
 
@@ -122,7 +124,7 @@ To check a reader once (this shows whether phase, Doppler and high-resolution RS
 
 ```
 server/                 FastAPI + sllurp bridge
-  llrp_client.py        Impinj extensions: phase, Doppler, high-res RSSI, channel; mock reader
+  llrp_client.py        Impinj extensions: phase, Doppler, high-res RSSI, channel; mock reader with walk playback
   recorder.py           JSONL sessions (header + one read per line)
   probe.py              reader check from the command line
 web/src/
@@ -147,7 +149,6 @@ Tests: `cd web && npm test` (RSSI and phase recovery, walk preparation, paramete
 
 ## Roadmap
 
-- A mock-reader mode in the bridge that plays back a walk (phase walks can be rehearsed in the web simulator today).
 - Phase with channel hopping: a per-channel offset is already modelled, but the unwrapping needs denser reads per channel.
 - **Multi-placement fit:** several survey + capture pairs in one solve, so a few tags can cover many spots.
 - Fitting global model parameters (tag backscatter, reader sensitivity) jointly, not just scanning them.

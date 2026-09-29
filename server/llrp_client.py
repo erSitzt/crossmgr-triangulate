@@ -214,26 +214,94 @@ class LlrpReader:
 
 # -- mock ---------------------------------------------------------------------------------------
 
-MOCK_ANTENNAS = {1: (0.3, 0.8, -4.5), 2: (0.3, 1.9, -4.5), 3: (0.3, 3.3, 0.0)}
+Vec3 = tuple[float, float, float]
+MOCK_ANTENNAS: dict[int, Vec3] = {1: (0.3, 0.8, -4.5), 2: (0.3, 1.9, -4.5), 3: (0.3, 3.3, 0.0)}
 MOCK_TAGS = [(x, y, z) for x in (-2.0, 0.0, 2.0) for z in (-3.0, 0.0, 3.0) for y in (0.4, 1.2)]
 ETSI_MHZ = {1: 865.7, 2: 866.3, 3: 866.9, 4: 867.5}
+MOCK_PHASE_SIGN = -1  # reported phase falls with distance (the fit determines the sign from the data)
+
+
+def mock_read(epc: str, port: int, tx_dbm: float, antenna: Vec3, tag: Vec3, channel: int, offset: float,
+              rng: random.Random, ts_us: int, rx_sens_dbm: float, pi_jumps: bool = True) -> Optional[dict]:
+    """One simulated read: log-distance RSSI, round-trip phase with noise and the Impinj π ambiguity."""
+    d = math.dist(antenna, tag)
+    rssi = tx_dbm - 62 - 40 * math.log10(max(d, 0.3)) + rng.gauss(0, 1.5)
+    if rssi < rx_sens_dbm:
+        return None
+    lam = 299.792458 / ETSI_MHZ.get(channel, 866.5)
+    phase = MOCK_PHASE_SIGN * 4 * math.pi * d / lam + offset + rng.gauss(0, 0.1)
+    if pi_jumps and rng.random() < 0.5:
+        phase += math.pi
+    return {"epc": epc, "port": port, "rssi": round(rssi, 2), "phase": round(phase % (2 * math.pi), 5),
+            "doppler": round(rng.gauss(0, 0.5), 3), "channel": channel, "ts": ts_us, "n": 1}
+
+
+@dataclass
+class MockWalk:
+    """A tag carried from `start` to `end`: stand, walk at a slightly varying pace, stand."""
+
+    epc: str
+    start: Vec3
+    end: Vec3
+    speed: float = 0.35  # m/s
+    stand_s: float = 3.0
+    jitter: float = 0.2  # ± fraction of the speed, slow sine
+    s: float = 0.0  # position along the line
+    t: float = 0.0  # simulated seconds since the walk started
+    arrived: Optional[float] = None
+
+    @property
+    def length(self) -> float:
+        return math.dist(self.start, self.end)
+
+    @property
+    def done(self) -> bool:
+        return self.arrived is not None and self.t >= self.arrived + self.stand_s
+
+    def advance(self, dt: float) -> Vec3:
+        """Moves the simulated clock by dt and returns the tag position."""
+        self.t += dt
+        if self.t > self.stand_s and self.arrived is None:
+            v = self.speed * (1 + self.jitter * math.sin(2 * math.pi * 0.25 * self.t))
+            self.s = min(self.length, self.s + v * dt)
+            if self.s >= self.length:
+                self.arrived = self.t
+        f = self.s / self.length if self.length > 0 else 0.0
+        return tuple(a + (b - a) * f for a, b in zip(self.start, self.end))  # type: ignore[return-value]
 
 
 class MockReader:
-    """Static reference tags seen by 3 antennas: log-distance RSSI plus round-trip phase, for UI work
-    without hardware. The web app has a model-driven simulator for realistic numbers."""
+    """Static reference tags (REF0001.., the default survey grid) seen by 3 antennas, plus optional
+    walk playback for the phase fit. Log-distance RSSI and round-trip phase, for UI work without
+    hardware. The web app has a model-driven simulator for realistic RSSI."""
 
-    def __init__(self, on_reads: ReadCallback, on_status: Callable[[dict], None]):
+    LOOP_S = 0.01  # one port per step: the walk tag is read ~30×/s per port
+
+    def __init__(self, on_reads: ReadCallback, on_status: Callable[[dict], None], seed: Optional[int] = None):
         self.on_reads = on_reads
         self.on_status = on_status
         self.config = ReaderConfig(antennas=[AntennaConfig(p, 30) for p in MOCK_ANTENNAS])
+        self.antennas: dict[int, Vec3] = dict(MOCK_ANTENNAS)
+        self.walk: Optional[MockWalk] = None
+        self.walk_time_scale = 1.0
+        self._walk_t0_us = 0
         self._thread: Optional[threading.Thread] = None
         self._running = False
-        self._offsets = {p: random.uniform(0, 2 * math.pi) for p in MOCK_ANTENNAS}
+        self._rng = random.Random(seed)
+        self._offsets = {p: self._rng.uniform(0, 2 * math.pi) for p in range(1, 5)}
+        self._k = 0
+        self._wk = 0
+        self._walk_seq = 0
+        self._stop_after_walk = False
 
     def status(self, message: str = "") -> dict:
+        walk = None
+        if self.walk:
+            walk = {"seq": self._walk_seq, "epc": self.walk.epc, "t": round(self.walk.t, 2), "s": round(self.walk.s, 3),
+                    "length": round(self.walk.length, 3), "done": self.walk.done}
         return {"type": "status", "mode": "mock", "connected": True, "running": self._running,
-                "host": "mock", "powerTable": [], "config": self.config.to_dict(), "message": message}
+                "host": "mock", "powerTable": [], "config": self.config.to_dict(),
+                "antennas": {p: list(v) for p, v in self.antennas.items()}, "walk": walk, "message": message}
 
     def connect(self, host: str, port: int = 5084) -> None:
         self.on_status(self.status(f"Mock reader ready ({len(MOCK_TAGS)} static tags REF0001.., same grid as the default survey)"))
@@ -241,6 +309,20 @@ class MockReader:
     def configure(self, cfg: ReaderConfig) -> None:
         self.config = cfg
         self.on_status(self.status("Mock config stored"))
+
+    def set_antennas(self, antennas: dict[int, Vec3]) -> None:
+        self.antennas = {**self.antennas, **antennas}
+
+    def start_walk(self, walk: MockWalk, time_scale: float = 1.0) -> None:
+        self.walk = walk
+        self._walk_seq += 1
+        self.walk_time_scale = max(0.1, float(time_scale))
+        self._walk_t0_us = int(time.time() * 1e6)
+        speedup = f", {self.walk_time_scale:g}× speed" if self.walk_time_scale != 1 else ""
+        self.on_status(self.status(f"Mock walk {walk.epc}: {walk.length:.1f} m, stand {walk.stand_s:.0f} s, {walk.speed:.2f} m/s{speedup}"))
+        self._stop_after_walk = not self._running  # a walk on an idle mock plays back on its own
+        if not self._running:
+            self.start()
 
     def start(self) -> None:
         if self._running:
@@ -257,26 +339,55 @@ class MockReader:
     def disconnect(self) -> None:
         self.stop()
 
-    def _loop(self) -> None:
-        ports = [a for a in self.config.antennas if a.enabled and a.port in MOCK_ANTENNAS] or [AntennaConfig(1, 30)]
+    def tick(self, now_us: int) -> list[dict]:
+        """One loop step. During a walk only the walked tag is read, one inventory step per port visit
+        on the simulated clock (several per loop when sped up, so the read density per metre stays
+        the same). Otherwise the static tags are inventoried in real time on every 3rd loop."""
+        ports = [a for a in self.config.antennas if a.enabled and a.port in self.antennas] or [AntennaConfig(1, 30)]
         chans = self.config.channels or [1]
-        k = 0
-        while self._running:
-            a = ports[k % len(ports)]
-            ch = chans[(k // (len(ports) * 20)) % len(chans)]
-            lam = 299.792458 / ETSI_MHZ.get(ch, 866.5)
-            ax, ay, az = MOCK_ANTENNAS[a.port]
-            batch = []
-            for i, (x, y, z) in enumerate(MOCK_TAGS):
-                d = math.dist((ax, ay, az), (x, y, z))
-                rssi = a.tx_dbm - 62 - 40 * math.log10(max(d, 0.3)) + random.gauss(0, 1.5)
-                if rssi < self.config.rx_sens_dbm or random.random() < 0.3:
+        ant = lambda port: self.antennas[port] if port in self.antennas else (0.0, 2.0, 0.0)  # noqa: E731
+        chan = lambda j: chans[(j // (len(ports) * 20)) % len(chans)]  # noqa: E731
+        out = []
+        w = self.walk
+        walking = bool(w and not w.done)
+        if w and not w.done:
+            steps = max(1, round(self.walk_time_scale))
+            dt = self.LOOP_S * self.walk_time_scale / steps
+            before = int(w.t)
+            for _ in range(steps):
+                j = self._wk
+                self._wk += 1
+                a = ports[j % len(ports)]
+                pos = w.advance(dt)
+                ts = self._walk_t0_us + int(w.t * 1e6)  # simulated clock: a sped-up walk keeps real speeds
+                if self._rng.random() < 0.9:
+                    r = mock_read(w.epc, a.port, a.tx_dbm, ant(a.port), pos, chan(j), self._offsets[a.port], self._rng, ts, self.config.rx_sens_dbm)
+                    if r:
+                        r["walk"] = self._walk_seq  # lets the UI pick exactly this walk's reads
+                        out.append(r)
+                if w.done:
+                    break
+            if w.done:
+                if self._stop_after_walk:
+                    self._running = False
+                self.on_status(self.status(f"Mock walk {w.epc} done"))
+            elif int(w.t) != before:
+                self.on_status(self.status())  # progress once per simulated second (no log message)
+        k = self._k
+        self._k += 1
+        if k % 3 == 0 and not walking:  # only the walked tag is in the field during a walk
+            a = ports[(k // 3) % len(ports)]
+            for i, tag in enumerate(MOCK_TAGS):
+                if self._rng.random() < 0.3:
                     continue
-                phase = (4 * math.pi * d / lam + self._offsets[a.port] + random.gauss(0, 0.1)) % (2 * math.pi)
-                batch.append({"epc": f"REF{i + 1:04d}", "port": a.port, "rssi": round(rssi, 2), "phase": round(phase, 5),
-                              "doppler": round(random.gauss(0, 0.5), 3), "channel": ch,
-                              "ts": int(time.time() * 1e6), "n": 1})
+                r = mock_read(f"REF{i + 1:04d}", a.port, a.tx_dbm, ant(a.port), tag, chan(k), self._offsets[a.port], self._rng, now_us, self.config.rx_sens_dbm)
+                if r:
+                    out.append(r)
+        return out
+
+    def _loop(self) -> None:
+        while self._running:
+            batch = self.tick(int(time.time() * 1e6))
             if batch:
                 self.on_reads(batch)
-            k += 1
-            time.sleep(0.025)
+            time.sleep(self.LOOP_S)

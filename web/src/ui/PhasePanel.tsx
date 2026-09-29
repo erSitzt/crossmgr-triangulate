@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Setup, Vec3 } from '@antenna/model/types';
 import { Check, NumField, Section } from '@antenna/ui/controls';
+import { send, useLive } from '../capture/liveClient';
 import { parseSession } from '../capture/stats';
 import { DEFAULT_SYNTH_WALK, synthWalk } from '../phase/synthWalk';
 import { prepareWalk, type Walk } from '../phase/walk';
@@ -39,6 +40,19 @@ export function PhasePanel() {
   const [maxGapS, setMaxGapS] = useState(0.12);
   const prepared = useMemo(() => walks.map((w) => (w.reads.length ? prepareWalk(w, { maxGapS, fallbackMHz: setup.env.freqMHz }) : null)), [walks, maxGapS, setup.env.freqMHz]);
   const liveEpcs = useMemo(() => [...new Set(st.reads.slice(-20000).map((r) => r.epc))], [st.reads]);
+  const live = useLive();
+  const isMock = live.status.connected && live.status.mode === 'mock';
+  const [timeScale, setTimeScale] = useState(1);
+  // walk played back by the mock reader: fill its reads once the server reports it done
+  const [pending, setPending] = useState<{ id: string; epc: string; afterSeq: number } | null>(null);
+  const mw = live.status.walk;
+  useEffect(() => {
+    if (!pending || !mw?.done || mw.seq <= pending.afterSeq) return; // a newer walk than the one before the click
+    const s = useStore.getState();
+    const reads = s.reads.filter((r) => r.walk === mw.seq && r.epc === pending.epc && r.phase != null);
+    s.setWalks(s.walks.map((w) => (w.id === pending.id ? { ...w, reads } : w)));
+    setPending(null);
+  }, [mw?.done, mw?.seq, pending]);
 
   const update = (i: number, p: Partial<Walk>) => st.setWalks(walks.map((w, j) => (j === i ? { ...w, ...p } : w)));
   const setEnd = (i: number, end: 'from' | 'to', k: number, v: number) => {
@@ -51,6 +65,22 @@ export function PhasePanel() {
     const t = perturbSetup(setup, { posM: 0.8, angDeg: 12, offsetDb: 1.5, seed: 1 });
     st.set({ simTruth: t });
     return t;
+  };
+
+  const mockWalk = (w: Walk) => {
+    const t = truth();
+    send({ cmd: 'configure', antennas: setup.antennas.map((a) => ({ port: a.port, txDbm: a.txDbm, enabled: a.enabled })), rxSensDbm: setup.env.readerSensDbm, channels: [1] });
+    send({
+      cmd: 'mockWalk',
+      epc: w.epc,
+      from: w.from,
+      to: w.to,
+      speed: 0.35,
+      standS: 3,
+      timeScale,
+      antennas: t.antennas.filter((a) => a.enabled).map((a) => ({ port: a.port, position: a.position })),
+    });
+    setPending({ id: w.id, epc: w.epc, afterSeq: mw?.seq ?? 0 });
   };
 
   const run = async () => {
@@ -120,6 +150,11 @@ export function PhasePanel() {
                   Load session…
                 </button>
                 <button onClick={() => update(i, { reads: synthWalk(truth(), survey, w, { ...DEFAULT_SYNTH_WALK, seed: i + 1 }).reads.map((r) => ({ ...r, epc: w.epc })) })}>Simulate</button>
+                {isMock && (
+                  <button disabled={!!pending} onClick={() => mockWalk(w)} title="Play this walk back through the mock reader (live reads, like a real walk)">
+                    {pending?.id === w.id ? `Walking… ${mw && mw.seq > pending.afterSeq ? `${mw.s.toFixed(1)}/${mw.length.toFixed(1)} m` : ''}` : 'Mock walk'}
+                  </button>
+                )}
               </div>
               {pw ? (
                 <p className="muted">
@@ -133,6 +168,15 @@ export function PhasePanel() {
             </div>
           );
         })}
+        {isMock && (
+          <div className="row">
+            <span className="muted">Mock walk speed-up</span>
+            <select value={timeScale} onChange={(e) => setTimeScale(Number(e.target.value))}>
+              {[1, 2, 4, 8].map((v) => <option key={v} value={v}>{v}×</option>)}
+            </select>
+            <span className="muted">The mock plays the green "true" antennas (Offline → Simulate sets them).</span>
+          </div>
+        )}
         <datalist id="walk-epcs">{liveEpcs.map((e) => <option key={e} value={e} />)}</datalist>
       </Section>
       <Section title="Fit">

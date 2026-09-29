@@ -8,6 +8,7 @@ export interface Read {
   channel?: number | null;
   ts: number; // µs
   n?: number;
+  walk?: number; // mock reader walk playback: sequence number of the walk
 }
 
 /** Aggregated reads of one reference tag on one reader port. */

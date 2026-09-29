@@ -9,6 +9,9 @@ WebSocket /ws protocol (JSON), a superset of crossmgr-antenna's:
                      "searchMode": "dual", "session": 0, "modeIndex": 1000, "channels": [1]}
                     {"cmd": "start"} | {"cmd": "stop"} | {"cmd": "disconnect"} | {"cmd": "status"}
                     {"cmd": "record", "label": "grid-1", "meta": {...}} | {"cmd": "stopRecord"}
+                    mock only: {"cmd": "mockWalk", "epc": "WALK0001", "from": [x,y,z], "to": [x,y,z],
+                                "speed": 0.35, "standS": 3, "timeScale": 1,
+                                "antennas": [{"port": 1, "position": [x,y,z]}]}   # optional antenna positions
   server -> client: {"type": "status", ..., "recorder": {...}}
                     {"type": "reads", "reads": [{"epc","port","rssi","phase","doppler","channel","ts","n"}]}
                     {"type": "error", "message": "..."}
@@ -28,7 +31,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from llrp_client import LlrpReader, MockReader, ReaderConfig
+from llrp_client import LlrpReader, MockReader, MockWalk, ReaderConfig
 from recorder import SESSIONS_DIR, Recorder, list_sessions
 
 logging.basicConfig(level=logging.INFO)
@@ -94,6 +97,15 @@ class Hub:
         elif cmd == "disconnect" and self.reader:
             await asyncio.to_thread(self.reader.disconnect)
             self.reader = None
+        elif cmd == "mockWalk":
+            if not isinstance(self.reader, MockReader):
+                raise ValueError("walk playback needs the mock reader")
+            if msg.get("antennas"):
+                self.reader.set_antennas({int(a["port"]): tuple(float(v) for v in a["position"]) for a in msg["antennas"]})
+            walk = MockWalk(epc=str(msg.get("epc", "WALK0001")).upper(),
+                            start=tuple(float(v) for v in msg["from"]), end=tuple(float(v) for v in msg["to"]),
+                            speed=float(msg.get("speed", 0.35)), stand_s=float(msg.get("standS", 3)))
+            self.reader.start_walk(walk, float(msg.get("timeScale", 1)))
         elif cmd == "record":
             reader_cfg = self.reader.config.to_dict() if self.reader else {}
             path = self.recorder.start(str(msg.get("label", "session")), reader_cfg, msg.get("meta"))

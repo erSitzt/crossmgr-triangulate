@@ -59,6 +59,8 @@ interface State extends Persisted {
   setSpecs(s: AntennaFitSpec[]): void;
   setWalks(w: Walk[]): void;
   addReads(r: Read[]): void;
+  /** reads that belong to a phase walk: kept, but they do not replace the current capture */
+  addWalkReads(r: Read[]): void;
   setCapture(c: Capture, source: CaptureSource, label: string, reads?: Read[], truth?: Setup | null): void;
   clearCapture(): void;
   set(p: Partial<State>): void;
@@ -95,6 +97,10 @@ export const useStore = create<State>((set, get) => ({
   addReads: (r) => {
     const reads = get().reads.concat(r);
     set({ reads: reads.length > MAX_READS ? reads.slice(-MAX_READS) : reads, captureSource: 'live' });
+  },
+  addWalkReads: (r) => {
+    const reads = get().reads.concat(r);
+    set({ reads: reads.length > MAX_READS ? reads.slice(-MAX_READS) : reads });
   },
   setCapture: (capture, captureSource, captureLabel, reads = [], simTruth = null) =>
     set({ capture, captureSource, captureLabel, reads, simTruth, fit: null }),

@@ -10,6 +10,8 @@ export interface ReaderStatus {
   message?: string;
   powerTable?: number[];
   recorder?: { recording: boolean; path: string | null; count: number };
+  /** mock reader only: walk playback progress */
+  walk?: { seq: number; epc: string; t: number; s: number; length: number; done: boolean } | null;
 }
 
 interface LiveState {
@@ -43,9 +45,15 @@ export function openSocket() {
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'reads') {
-      const st = useStore.getState();
-      if (st.captureSource === 'file' || st.captureSource === 'sim') st.clearCapture(); // live reads replace a loaded/simulated capture
-      useStore.getState().addReads(msg.reads as Read[]);
+      const reads = msg.reads as Read[];
+      const walk = reads.filter((r) => r.walk != null); // mock walk playback
+      const other = walk.length ? reads.filter((r) => r.walk == null) : reads;
+      if (walk.length) useStore.getState().addWalkReads(walk);
+      if (other.length) {
+        const st = useStore.getState();
+        if (st.captureSource === 'file' || st.captureSource === 'sim') st.clearCapture(); // live reads replace a loaded/simulated capture
+        useStore.getState().addReads(other);
+      }
     } else if (msg.type === 'status') {
       useLive.setState({ status: msg });
       if (msg.message) addLog(msg.message);
